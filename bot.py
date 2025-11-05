@@ -15,7 +15,7 @@ import asyncio
 from io import BytesIO
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
-# Environment variables - SAFE FOR GITHUB/RAILWAY
+# Environment variables - SAFE FOR GITHUB/RAILWAY  -this should work
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 GOOGLE_CREDENTIALS_JSON = os.getenv("GOOGLE_CREDENTIALS_JSON")
