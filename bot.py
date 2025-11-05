@@ -927,16 +927,64 @@ async def handle_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not audio_files:
             await update.message.reply_text("⚠️ Warning: Could not generate TTS audio for collocations.")
         
-        # Step 4: Create ZIP package (includes HTML file)
+        # Step 4: Create complete ZIP package (includes HTML, vocab .txt, and audio)
         await update_progress(4, "📦 Creating complete package...")
         
-        try:
-            # Get HTML content for ZIP
-            html_filename, html_content = create_html_document(topic, content, timestamp)
+        zip_filename = f"{safe_topic}_{timestamp}_complete_package.zip"
+        zip_buffer = BytesIO()
+        
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            # Add vocabulary text file
+            safe_vocab_filename = safe_filename(vocab_filename)
+            zip_file.writestr(safe_vocab_filename, vocab_content.encode('utf-8'))
             
-            # Create enhanced ZIP with HTML
-            zip_filename = f"{safe_topic}_{timestamp}_complete_package.zip"
-            zip_buffer = BytesIO()
+            # Add all TTS audio files
+            for audio_filename, audio_data in audio_files.items():
+                safe_audio = safe_filename(audio_filename)
+                zip_file.writestr(safe_audio, audio_data)
             
-            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-               
+            # Add HTML document
+            safe_html = safe_filename(html_filename)
+            zip_file.writestr(safe_html, html_content.encode('utf-8'))
+        
+        zip_buffer.seek(0)
+
+        # Check file size
+        file_size = zip_buffer.getbuffer().nbytes
+        if file_size > config.MAX_FILE_SIZE:
+            raise ValueError(f"ZIP file too large: {file_size / 1024 / 1024:.1f}MB (max: {config.MAX_FILE_SIZE / 1024 / 1024}MB)")
+
+        # Step 5: Send ZIP package
+        await update_progress(5, "📤 Sending complete package...")
+        zip_file_obj = BytesIO(zip_buffer.getvalue())
+        zip_file_obj.name = zip_filename
+
+        await update.message.reply_document(
+            document=zip_file_obj,
+            filename=zip_filename,
+            caption="📦 **Complete Learning Package**\n\n"
+                    "Contains:\n• HTML document\n• Collocations (Anki-ready .txt)\n• All TTS audio files\n\n"
+                    "For Anki: Extract audio files into your `collection.media` folder and import the .txt file."
+        )
+
+        # Final success message
+        await update.message.reply_text(
+            "✅ All materials generated successfully!\n\n"
+            "Tip: Review the HTML file first — it’s beautifully formatted for reading and discussion. 📖"
+        )
+
+    except Exception as e:
+        error_msg = f"❌ Unexpected error: {str(e)[:200]}"
+        print(f"[Bot] Full error for user {user_id}: {e}")
+        await update.message.reply_text(error_msg)
+
+# Add this at the very bottom to run the bot
+if __name__ == "__main__":
+    application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_topic))
+
+    print("Bot is running...")
+    application.run_polling()
