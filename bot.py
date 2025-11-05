@@ -14,11 +14,23 @@ from google.oauth2 import service_account
 import asyncio
 from io import BytesIO
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+import logging
 
-# Environment variables - SAFE FOR GITHUB/RAILWAY  -this should work
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+
+# Load environment variables (safe for GitHub / Railway)
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 GOOGLE_CREDENTIALS_JSON = os.getenv("GOOGLE_CREDENTIALS_JSON")
+
+# Validate required environment variables
+if not TELEGRAM_BOT_TOKEN:
+    raise ValueError("Missing TELEGRAM_BOT_TOKEN in environment variables")
+if not DEEPSEEK_API_KEY:
+    raise ValueError("Missing DEEPSEEK_API_KEY in environment variables")
+if not GOOGLE_CREDENTIALS_JSON:
+    raise ValueError("Missing GOOGLE_CREDENTIALS_JSON in environment variables")
 
 # Configuration
 class Config:
@@ -28,14 +40,14 @@ class Config:
     API_RETRY_ATTEMPTS = 3
     RATE_LIMIT_REQUESTS = 5
     RATE_LIMIT_WINDOW = 3600  # 1 hour in seconds
-    MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB for Telegram
+    MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB (Telegram limit)
 
 config = Config()
 
 # Initialize DeepSeek client
 deepseek_client = OpenAI(
     api_key=DEEPSEEK_API_KEY,
-    base_url="https://api.deepseek.com"
+    base_url="https://api.deepseek.com"  # Fixed: no trailing spaces
 )
 
 # Rate Limiter
@@ -48,14 +60,11 @@ class RateLimiter:
     def is_allowed(self, user_id):
         now = time.time()
         user_requests = self.requests[user_id]
-        
         # Remove old requests outside the time window
         user_requests[:] = [req_time for req_time in user_requests 
                           if now - req_time < self.window]
-        
         if len(user_requests) >= self.max_requests:
             return False
-        
         user_requests.append(now)
         return True
     
