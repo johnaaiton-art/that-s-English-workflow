@@ -700,14 +700,7 @@ def create_html_document(topic, content, timestamp):
         </div>
         
         <div class="content">
-            <!-- Main Text -->
-            <div class="section">
-                <h2 class="section-title">
-                    <span class="section-icon">📖</span>
-                    Main Text
-                </h2>
-                <div class="main-text">{content['main_text']}</div>
-            </div>
+            
             
             <!-- Collocations -->
             <div class="section">
@@ -728,7 +721,14 @@ def create_html_document(topic, content, timestamp):
                     </tbody>
                 </table>
             </div>
-            
+            <!-- Main Text -->
+            <div class="section">
+                <h2 class="section-title">
+                    <span class="section-icon">📖</span>
+                    Main Text
+                </h2>
+                <div class="main-text">{content['main_text']}</div>
+            </div>
             <!-- Opinion Texts -->
             <div class="section">
                 <h2 class="section-title">
@@ -785,15 +785,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send a message when the command /start is issued."""
     await update.message.reply_text(
         "Welcome to the English Learning Bot! 🎓\n\n"
-        "Simply send me a topic and I'll create comprehensive learning materials:\n\n"
-        "📄 Reading text (CEFR B2/C1 level, 200-250 words)\n"
-        "📝 15 collocations including phrasal verbs with TTS audio\n"
-        "🎤 3 reaction texts with audio (positive, critical, balanced)\n"
-        "💬 5 discussion questions\n"
-        "📦 Complete package: HTML document + Anki files\n\n"
-        "**Rate Limit:** 5 requests per hour\n\n"
-        "Just type your topic to begin!\n"
-        "Example: 'remote work', 'climate change', 'social media impact'"
+        "please give me a topic you want to discuss:\n\n"
+        "be specific e.g.....:\n\n"
+        "NOT - How can we use AI in business ( = too general):\n\n" 
+        "GOOD = How can non coders working in an IT company use AI:\n\n"
+        "📄some examples of topics:................\n\n"
+        "How has X been changing" = talk about recent trends\n\n"
+        "What is happening in late 2025 with ... “ =  talk about trends\n\n"
+        "Is X better than Y " = practice comparing\n\n"
+        "Predictions for X in 2026" = practicing predicting\n\n"
+        "How to ..." =  advice \n\n"
+        "Why do people.,." = giving reasons \n\n"
+        
     )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -912,7 +915,7 @@ async def handle_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_document(
             document=html_file,
             filename=html_filename,
-            caption="📄 **Learning Materials Document**\n\nOpen this HTML file in your browser for a beautifully formatted view of all materials!"
+            caption="📄 **Open this HTML file to get vocab list and texts!"
         )
         
         # Send collocations preview in chat
@@ -971,15 +974,14 @@ async def handle_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_document(
             document=zip_file_obj,
             filename=zip_filename,
-            caption="📦 **Complete Learning Package**\n\n"
-                    "Contains:\n• HTML document\n• Collocations (Anki-ready .txt)\n• All TTS audio files\n\n"
-                    "For Anki: Extract audio files into your `collection.media` folder and import the .txt file."
+            caption="📦 opend this zip folder for anki text import and sound files\n\n"
+                    
         )
 
         # Final success message
         await update.message.reply_text(
             "✅ All materials generated successfully!\n\n"
-            "Tip: Review the HTML file first — it’s beautifully formatted for reading and discussion. 📖"
+           
         )
 
     except Exception as e:
