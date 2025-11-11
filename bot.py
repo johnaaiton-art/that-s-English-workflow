@@ -784,20 +784,24 @@ def create_html_document(topic, content, timestamp):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send a message when the command /start is issued."""
     await update.message.reply_text(
-        "Welcome to the English Learning Bot! 🎓\n\n"
-        "please give me a topic you want to discuss:\n\n"
-        "be specific e.g.....:\n\n"
-        "NOT - How can we use AI in business ( = too general):\n\n" 
-        "GOOD = How can non coders working in an IT company use AI:\n\n"
-        "📄some examples of topics:................\n\n"
-        "How has X been changing" = talk about recent trends\n\n"
-        "What is happening in late 2025 with ... “ =  talk about trends\n\n"
-        "Is X better than Y " = practice comparing\n\n"
-        "Predictions for X in 2026" = practicing predicting\n\n"
-        "How to ..." =  advice \n\n"
-        "Why do people.,." = giving reasons \n\n"
-        
-    )
+    """Welcome to the English Learning Bot! 🎯
+
+Please give me a topic you want to discuss:
+
+Be specific e.g.:
+
+NOT - How can we use AI in business ( = too general)
+
+GOOD = How can non-coders working in an IT company use AI?
+
+Some examples of topics:
+- "How has X been changing" = talk about recent trends
+- "What is happening in late 2025 with ..." = talk about trends
+- "Is X better than Y" = practice comparing
+- "Predictions for X in 2026" = practicing predicting
+- "How to ..." = advice
+- "Why do people...?" = giving reasons"""
+)
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send a message when the command /help is issued."""
