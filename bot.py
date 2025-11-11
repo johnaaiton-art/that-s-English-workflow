@@ -915,7 +915,7 @@ async def handle_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_document(
             document=html_file,
             filename=html_filename,
-            caption="📄 **Open this HTML file to get vocab list and texts!"
+            caption="📄 **Open this HTML file to get vocab list and texts!"**
         )
         
         # Send collocations preview in chat
