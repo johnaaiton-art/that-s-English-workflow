@@ -922,9 +922,9 @@ async def handle_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
             caption="📄 **Open this HTML file to get vocab list and texts!**"
         )
         
-        # Send collocations preview in chat
-        vocab_preview = format_vocabulary_preview(content['collocations'])
-        await update.message.reply_text(vocab_preview, parse_mode='Markdown')
+      # Send collocations preview in chat → DISABLED per user request
+# vocab_preview = format_vocabulary_preview(content['collocations'])
+# await update.message.reply_text(vocab_preview, parse_mode='Markdown')
         
         # Step 3: Create collocations file with TTS
         await update_progress(3, "🎵 Generating TTS audio for collocations...")
