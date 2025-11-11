@@ -16,7 +16,7 @@ from io import BytesIO
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 import logging
 
-# Configure logging
+# Configure logging yes
 logging.basicConfig(level=logging.INFO)
 
 # Load environment variables (safe for GitHub / Railway)
