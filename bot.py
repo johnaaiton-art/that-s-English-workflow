@@ -16,8 +16,12 @@ from io import BytesIO
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 import logging
 
-# Configure logging yes
-logging.basicConfig(level=logging.INFO)
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # Load environment variables (safe for GitHub / Railway)
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -41,13 +45,17 @@ class Config:
     RATE_LIMIT_REQUESTS = 5
     RATE_LIMIT_WINDOW = 3600  # 1 hour in seconds
     MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB (Telegram limit)
+    
+    # Voice configurations
+    CHIRP3_VOICE = "en-US-Chirp3-HD"  # For main texts
+    WAVENET_VOICE = "en-US-Wavenet-H"  # For Anki cards (reliable single voice)
 
 config = Config()
 
 # Initialize DeepSeek client
 deepseek_client = OpenAI(
     api_key=DEEPSEEK_API_KEY,
-    base_url="https://api.deepseek.com"  # Fixed: no trailing spaces
+    base_url="https://api.deepseek.com"
 )
 
 # Rate Limiter
@@ -154,20 +162,21 @@ def split_text_into_sentences(text, max_length=200):
     wait=wait_exponential(multiplier=1, min=2, max=5),
     retry=retry_if_exception_type(Exception)
 )
-def generate_tts_english_sync(text, voice_name):
-    """Generate English TTS audio using Google Cloud Chirp3"""
+def generate_tts_chirp3_sync(text, voice_name):
+    """Generate English TTS audio using Google Cloud Chirp3 for main texts"""
     try:
+        logger.info(f"[Chirp3 TTS] Generating audio for text (length: {len(text)})")
         client = get_google_tts_client()
         
         sentences = split_text_into_sentences(text, max_length=200)
+        logger.info(f"[Chirp3 TTS] Split into {len(sentences)} sentences")
         
         all_audio = b""
-        for sentence in sentences:
+        for idx, sentence in enumerate(sentences):
             synthesis_input = texttospeech.SynthesisInput(text=sentence)
             voice = texttospeech.VoiceSelectionParams(
-                language_code="en-US" if "US" in voice_name else "en-GB",
-                name=voice_name,
-                ssml_gender=texttospeech.SsmlVoiceGender.NEUTRAL
+                language_code="en-US",
+                name=voice_name
             )
             
             audio_config = texttospeech.AudioConfig(
@@ -181,34 +190,35 @@ def generate_tts_english_sync(text, voice_name):
             )
             
             all_audio += response.audio_content
+            logger.info(f"[Chirp3 TTS] Sentence {idx+1}/{len(sentences)} completed")
         
+        logger.info(f"[Chirp3 TTS] ✅ Successfully generated {len(all_audio)} bytes of audio")
         return all_audio
     
     except Exception as e:
-        print(f"Chirp3 TTS Error: {str(e)}")
-        # Try fallback to standard voice
-        return generate_tts_standard_sync(text)
+        logger.error(f"[Chirp3 TTS] ❌ Error: {type(e).__name__}: {str(e)}")
+        raise
 
 @retry(
-    stop=stop_after_attempt(2),
+    stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=2, max=5),
     retry=retry_if_exception_type(Exception)
 )
-def generate_tts_standard_sync(text):
-    """Fallback TTS using standard English voice"""
+def generate_tts_wavenet_sync(text, voice_name="en-US-Wavenet-H"):
+    """Generate TTS using Wavenet voice for Anki cards - reliable and high quality"""
     try:
+        logger.info(f"[Wavenet TTS] Generating audio for: '{text[:50]}...'")
         client = get_google_tts_client()
         
         synthesis_input = texttospeech.SynthesisInput(text=text)
         voice = texttospeech.VoiceSelectionParams(
             language_code="en-US",
-            name="en-US-Standard-C",
-            ssml_gender=texttospeech.SsmlVoiceGender.FEMALE
+            name=voice_name
         )
         
         audio_config = texttospeech.AudioConfig(
             audio_encoding=texttospeech.AudioEncoding.MP3,
-            speaking_rate=0.9,
+            speaking_rate=0.95
         )
         
         response = client.synthesize_speech(
@@ -217,19 +227,23 @@ def generate_tts_standard_sync(text):
             audio_config=audio_config
         )
         
+        audio_size = len(response.audio_content)
+        logger.info(f"[Wavenet TTS] ✅ Success: {audio_size} bytes for '{text[:30]}'")
         return response.audio_content
     
     except Exception as e:
-        print(f"Standard TTS Error: {str(e)}")
-        return None
+        logger.error(f"[Wavenet TTS] ❌ Failed for '{text[:50]}': {type(e).__name__}: {str(e)}")
+        raise
 
-async def generate_tts_async(text, voice_name="en-US-Standard-C"):
-    """Run TTS generation in thread pool"""
+async def generate_tts_chirp3_async(text, voice_name):
+    """Run Chirp3 TTS generation in thread pool for main texts"""
     loop = asyncio.get_event_loop()
-    if "Chirp3" in voice_name:
-        return await loop.run_in_executor(None, generate_tts_english_sync, text, voice_name)
-    else:
-        return await loop.run_in_executor(None, generate_tts_standard_sync, text)
+    return await loop.run_in_executor(None, generate_tts_chirp3_sync, text, voice_name)
+
+async def generate_tts_wavenet_async(text, voice_name="en-US-Wavenet-H"):
+    """Run Wavenet TTS generation in thread pool for Anki cards"""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, generate_tts_wavenet_sync, text, voice_name)
 
 def safe_filename(filename):
     """Sanitize filename to prevent path traversal"""
@@ -269,11 +283,11 @@ def validate_deepseek_response(content):
     stop=stop_after_attempt(config.API_RETRY_ATTEMPTS),
     wait=wait_exponential(multiplier=1, min=4, max=10),
     retry=retry_if_exception_type((Exception,)),
-    before_sleep=lambda retry_state: print(f"Retry attempt {retry_state.attempt_number} after error: {retry_state.outcome.exception()}")
+    before_sleep=lambda retry_state: logger.warning(f"Retry attempt {retry_state.attempt_number} after error: {retry_state.outcome.exception()}")
 )
 def generate_content_with_deepseek(topic):
     """Generate all content using DeepSeek API"""
-    print(f"[DeepSeek] Generating content for topic: {topic[:50]}...")
+    logger.info(f"[DeepSeek] Generating content for topic: {topic[:50]}...")
     
     prompt = f"""You are an English language teaching assistant. Create learning materials about the topic: "{topic}"
 
@@ -311,7 +325,7 @@ CRITICAL REQUIREMENTS:
 7. Return ONLY valid JSON, no additional text"""
 
     try:
-        print(f"[DeepSeek] Sending request to API...")
+        logger.info(f"[DeepSeek] Sending request to API...")
         response = deepseek_client.chat.completions.create(
             model="deepseek-chat",
             messages=[
@@ -322,7 +336,7 @@ CRITICAL REQUIREMENTS:
             timeout=45.0
         )
         
-        print(f"[DeepSeek] Received response, parsing...")
+        logger.info(f"[DeepSeek] Received response, parsing...")
         content_text = response.choices[0].message.content
         
         # Try to extract JSON if there's extra text
@@ -333,23 +347,23 @@ CRITICAL REQUIREMENTS:
         # Parse JSON
         content = json.loads(content_text)
         
-        print(f"[DeepSeek] JSON parsed successfully")
+        logger.info(f"[DeepSeek] JSON parsed successfully")
         
         # Validate structure
         validate_deepseek_response(content)
         
-        print(f"[DeepSeek] Validation passed, returning content")
+        logger.info(f"[DeepSeek] ✅ Validation passed, returning content")
         return content
     
     except json.JSONDecodeError as e:
-        print(f"[ERROR] JSON parsing error: {str(e)}")
-        print(f"[ERROR] Raw content: {content_text[:200]}...")
+        logger.error(f"[DeepSeek] ❌ JSON parsing error: {str(e)}")
+        logger.error(f"[DeepSeek] Raw content: {content_text[:200]}...")
         raise
     except ValueError as e:
-        print(f"[ERROR] Validation error: {str(e)}")
+        logger.error(f"[DeepSeek] ❌ Validation error: {str(e)}")
         raise
     except Exception as e:
-        print(f"[ERROR] DeepSeek API Error: {type(e).__name__}: {str(e)}")
+        logger.error(f"[DeepSeek] ❌ API Error: {type(e).__name__}: {str(e)}")
         raise
 
 async def create_vocabulary_file_with_tts(collocations, topic, progress_callback=None):
@@ -362,14 +376,20 @@ async def create_vocabulary_file_with_tts(collocations, topic, progress_callback
     audio_files = {}
     
     total_items = len(collocations)
+    logger.info(f"[Anki TTS] Starting TTS generation for {total_items} collocations using {config.WAVENET_VOICE}")
     
-    # Generate TTS for all collocations concurrently
+    # Generate TTS for all collocations using Wavenet voice
     tts_tasks = []
     for item in collocations:
-        tts_tasks.append(generate_tts_async(item['english'], voice_name="en-US-Standard-C"))
+        tts_tasks.append(generate_tts_wavenet_async(item['english'], voice_name=config.WAVENET_VOICE))
     
     # Await all TTS generations
+    logger.info(f"[Anki TTS] Awaiting {len(tts_tasks)} concurrent TTS generations...")
     audio_results = await asyncio.gather(*tts_tasks, return_exceptions=True)
+    logger.info(f"[Anki TTS] All TTS generations completed")
+    
+    success_count = 0
+    failed_count = 0
     
     for idx, (item, audio_data) in enumerate(zip(collocations, audio_results)):
         english_text = item['english']
@@ -378,12 +398,18 @@ async def create_vocabulary_file_with_tts(collocations, topic, progress_callback
             await progress_callback(idx + 1, total_items)
         
         # Check if audio generation succeeded
-        if isinstance(audio_data, Exception) or not audio_data:
-            print(f"TTS failed for '{english_text}': {audio_data if isinstance(audio_data, Exception) else 'No data'}")
+        if isinstance(audio_data, Exception):
+            logger.error(f"[Anki TTS] ❌ Exception for '{english_text}': {type(audio_data).__name__}: {audio_data}")
+            failed_count += 1
+            # Add row without audio: Russian | English
+            content += f"{item['russian']}\t{item['english']}\n"
+        elif not audio_data:
+            logger.error(f"[Anki TTS] ❌ Empty data for '{english_text}'")
+            failed_count += 1
             # Add row without audio: Russian | English
             content += f"{item['russian']}\t{item['english']}\n"
         else:
-            # Create filename using MD5 hash
+            # Success - create filename using MD5 hash
             hash_object = hashlib.md5(english_text.encode())
             audio_filename = f"tts_{hash_object.hexdigest()}.mp3"
             
@@ -398,6 +424,13 @@ async def create_vocabulary_file_with_tts(collocations, topic, progress_callback
             
             # Add row with 3 columns: Russian | English | Audio
             content += f"{item['russian']}\t{item['english']}\t{anki_tag}\n"
+            success_count += 1
+            logger.info(f"[Anki TTS] ✅ {idx+1}/{total_items}: '{english_text[:30]}' -> {audio_filename}")
+    
+    logger.info(f"[Anki TTS] SUMMARY: ✅ {success_count} succeeded, ❌ {failed_count} failed out of {total_items} total")
+    
+    if failed_count > 0:
+        logger.warning(f"[Anki TTS] ⚠️ WARNING: {failed_count}/{total_items} TTS generations failed")
     
     return filename, content, audio_files
 
@@ -407,21 +440,28 @@ def create_zip_package(vocab_filename, vocab_content, audio_files, topic, timest
     zip_filename = f"{safe_topic_name}_{timestamp}_anki_package.zip"
     zip_buffer = BytesIO()
     
+    logger.info(f"[ZIP] Creating package with {len(audio_files)} audio files")
+    
     with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
         safe_vocab_filename = safe_filename(vocab_filename)
         
         # Add vocabulary text file
         zip_file.writestr(safe_vocab_filename, vocab_content.encode('utf-8'))
+        logger.info(f"[ZIP] Added vocabulary file: {safe_vocab_filename}")
         
         # Add all audio files with sanitized names
         for audio_filename, audio_data in audio_files.items():
             safe_audio_filename = safe_filename(audio_filename)
             zip_file.writestr(safe_audio_filename, audio_data)
+        
+        logger.info(f"[ZIP] Added {len(audio_files)} audio files")
     
     zip_buffer.seek(0)
     
     # Check file size
     file_size = zip_buffer.getbuffer().nbytes
+    logger.info(f"[ZIP] Package size: {file_size / 1024 / 1024:.2f}MB")
+    
     if file_size > config.MAX_FILE_SIZE:
         raise ValueError(f"ZIP file too large: {file_size / 1024 / 1024:.1f}MB (max: {config.MAX_FILE_SIZE / 1024 / 1024}MB)")
     
@@ -779,6 +819,7 @@ def create_html_document(topic, content, timestamp):
 </body>
 </html>"""
     
+    logger.info(f"[HTML] Created document: {html_filename}")
     return html_filename, html_content
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -845,9 +886,12 @@ async def handle_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     topic_raw = update.message.text.strip()
     
+    logger.info(f"[Bot] User {user_id} requested topic: '{topic_raw}'")
+    
     # Check rate limit
     if not rate_limiter.is_allowed(user_id):
         reset_time = rate_limiter.get_reset_time(user_id)
+        logger.warning(f"[Bot] User {user_id} rate limited, reset in {reset_time}s")
         await update.message.reply_text(
             f"⏱️ Rate limit reached!\n\n"
             f"You've used your 5 requests for this hour.\n"
@@ -859,7 +903,9 @@ async def handle_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Validate and sanitize topic
     try:
         topic = validate_topic(topic_raw)
+        logger.info(f"[Bot] Topic validated: '{topic}'")
     except ValueError as e:
+        logger.error(f"[Bot] Invalid topic from user {user_id}: {str(e)}")
         await update.message.reply_text(f"❌ Invalid topic: {str(e)}\n\nPlease try a different topic.")
         return
     
@@ -891,15 +937,17 @@ async def handle_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update_progress(1, "🤖 Generating content with AI...")
         await update.message.chat.send_action(action="typing")
         
-        print(f"[Bot] Starting content generation for user {user_id}, topic: {topic[:50]}")
+        logger.info(f"[Bot] Starting content generation for user {user_id}, topic: {topic[:50]}")
         
         try:
             content = generate_content_with_deepseek(topic)
+            logger.info(f"[Bot] Content generation successful")
         except Exception as e:
-            print(f"[Bot] Content generation failed: {type(e).__name__}: {str(e)}")
+            logger.error(f"[Bot] Content generation failed: {type(e).__name__}: {str(e)}")
             raise
         
         if not content:
+            logger.error(f"[Bot] Empty content returned for topic: {topic}")
             await update.message.reply_text(
                 "❌ Failed to generate content. Please try again with a different topic.\n\n"
                 "If the problem persists, the topic might be too complex or controversial."
@@ -921,13 +969,10 @@ async def handle_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
             filename=html_filename,
             caption="📄 **Open this HTML file to get vocab list and texts!**"
         )
+        logger.info(f"[Bot] HTML document sent: {html_filename}")
         
-      # Send collocations preview in chat → DISABLED per user request
-# vocab_preview = format_vocabulary_preview(content['collocations'])
-# await update.message.reply_text(vocab_preview, parse_mode='Markdown')
-        
-        # Step 3: Create collocations file with TTS
-        await update_progress(3, "🎵 Generating TTS audio for collocations...")
+        # Step 3: Create collocations file with TTS using Wavenet
+        await update_progress(3, "🎵 Generating TTS audio for collocations (Wavenet-H)...")
         await update.message.chat.send_action(action="record_voice")
         
         async def vocab_progress(current, total):
@@ -941,36 +986,79 @@ async def handle_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         
         if not audio_files:
+            logger.error(f"[Bot] No audio files generated for Anki TTS!")
             await update.message.reply_text("⚠️ Warning: Could not generate TTS audio for collocations.")
+        else:
+            logger.info(f"[Bot] Successfully generated {len(audio_files)} Anki TTS audio files")
         
-        # Step 4: Create complete ZIP package (includes HTML, vocab .txt, and audio)
-        await update_progress(4, "📦 Creating complete package...")
+        # Step 4: Generate opinion text TTS using Chirp3
+        await update_progress(4, "🎙️ Generating opinion audio (Chirp3)...")
+        await update.message.chat.send_action(action="record_voice")
+        
+        logger.info(f"[Bot] Generating Chirp3 TTS for 3 opinion texts")
+        
+        # Generate TTS for opinion texts concurrently
+        opinion_tts_tasks = [
+            generate_tts_chirp3_async(content['main_text'], config.CHIRP3_VOICE),
+            generate_tts_chirp3_async(content['opinion_texts']['positive'], config.CHIRP3_VOICE),
+            generate_tts_chirp3_async(content['opinion_texts']['negative'], config.CHIRP3_VOICE),
+            generate_tts_chirp3_async(content['opinion_texts']['mixed'], config.CHIRP3_VOICE)
+        ]
+        
+        opinion_audio_results = await asyncio.gather(*opinion_tts_tasks, return_exceptions=True)
+        
+        # Save opinion audio files
+        opinion_audio_files = {}
+        audio_names = ['Main_Text.mp3', 'Positive_Reaction.mp3', 'Critical_Reaction.mp3', 'Balanced_Reaction.mp3']
+        
+        for idx, (audio_data, filename) in enumerate(zip(opinion_audio_results, audio_names)):
+            if isinstance(audio_data, Exception) or not audio_data:
+                logger.error(f"[Bot] Failed to generate Chirp3 audio for {filename}: {audio_data if isinstance(audio_data, Exception) else 'No data'}")
+            else:
+                opinion_audio_files[filename] = audio_data
+                logger.info(f"[Bot] Generated Chirp3 audio: {filename} ({len(audio_data)} bytes)")
+        
+        # Step 5: Create complete ZIP package
+        await update_progress(5, "📦 Creating complete package...")
         
         zip_filename = f"{safe_topic}_{timestamp}_complete_package.zip"
         zip_buffer = BytesIO()
+        
+        logger.info(f"[Bot] Creating ZIP with {len(audio_files)} Anki TTS files + {len(opinion_audio_files)} opinion audio files")
         
         with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
             # Add vocabulary text file
             safe_vocab_filename = safe_filename(vocab_filename)
             zip_file.writestr(safe_vocab_filename, vocab_content.encode('utf-8'))
+            logger.info(f"[ZIP] Added: {safe_vocab_filename}")
             
-            # Add all TTS audio files
+            # Add all Anki TTS audio files
             for audio_filename, audio_data in audio_files.items():
                 safe_audio = safe_filename(audio_filename)
                 zip_file.writestr(safe_audio, audio_data)
+            logger.info(f"[ZIP] Added {len(audio_files)} Anki TTS audio files")
+            
+            # Add opinion audio files
+            for audio_filename, audio_data in opinion_audio_files.items():
+                safe_audio = safe_filename(audio_filename)
+                zip_file.writestr(safe_audio, audio_data)
+            logger.info(f"[ZIP] Added {len(opinion_audio_files)} opinion audio files")
             
             # Add HTML document
             safe_html = safe_filename(html_filename)
             zip_file.writestr(safe_html, html_content.encode('utf-8'))
+            logger.info(f"[ZIP] Added: {safe_html}")
         
         zip_buffer.seek(0)
 
         # Check file size
         file_size = zip_buffer.getbuffer().nbytes
+        logger.info(f"[ZIP] Final package size: {file_size / 1024 / 1024:.2f}MB")
+        
         if file_size > config.MAX_FILE_SIZE:
             raise ValueError(f"ZIP file too large: {file_size / 1024 / 1024:.1f}MB (max: {config.MAX_FILE_SIZE / 1024 / 1024}MB)")
 
-        # Step 5: Send ZIP package
+        # Send ZIP package
         await update_progress(5, "📤 Sending complete package...")
         zip_file_obj = BytesIO(zip_buffer.getvalue())
         zip_file_obj.name = zip_filename
@@ -978,28 +1066,49 @@ async def handle_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_document(
             document=zip_file_obj,
             filename=zip_filename,
-            caption="📦 opend this zip folder for anki text import and sound files\n\n"
-                    
+            caption="📦 Open this ZIP folder for:\n"
+                    "• Anki text import file (.txt)\n"
+                    f"• {len(audio_files)} Anki TTS sound files\n"
+                    f"• {len(opinion_audio_files)} Opinion audio files\n"
+                    "• HTML materials document\n\n"
+                    "Extract all files and import into Anki!"
         )
+        
+        logger.info(f"[Bot] ✅ Successfully sent complete package to user {user_id}")
 
         # Final success message
         await update.message.reply_text(
             "✅ All materials generated successfully!\n\n"
-           
+            f"📊 Summary:\n"
+            f"• Collocations: {len(content['collocations'])}\n"
+            f"• Anki TTS files: {len(audio_files)}\n"
+            f"• Opinion audio: {len(opinion_audio_files)}\n"
+            f"• Total ZIP size: {file_size / 1024 / 1024:.2f}MB"
         )
 
     except Exception as e:
         error_msg = f"❌ Unexpected error: {str(e)[:200]}"
-        print(f"[Bot] Full error for user {user_id}: {e}")
+        logger.error(f"[Bot] ERROR for user {user_id}: {type(e).__name__}: {str(e)}", exc_info=True)
         await update.message.reply_text(error_msg)
 
-# Add this at the very bottom to run the bot
+# Main bot execution
 if __name__ == "__main__":
+    logger.info("=" * 60)
+    logger.info("🤖 Starting English Learning Telegram Bot")
+    logger.info("=" * 60)
+    logger.info(f"Configuration:")
+    logger.info(f"  - Max topic length: {config.MAX_TOPIC_LENGTH}")
+    logger.info(f"  - Max vocab items: {config.MAX_VOCAB_ITEMS}")
+    logger.info(f"  - Chirp3 voice: {config.CHIRP3_VOICE}")
+    logger.info(f"  - Wavenet voice: {config.WAVENET_VOICE}")
+    logger.info(f"  - Rate limit: {config.RATE_LIMIT_REQUESTS} requests per {config.RATE_LIMIT_WINDOW}s")
+    logger.info("=" * 60)
+    
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_topic))
 
-    print("Bot is running...")
+    logger.info("✅ Bot is running and ready to accept messages...")
     application.run_polling()
